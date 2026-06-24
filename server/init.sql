@@ -1,13 +1,20 @@
--- ============================================
--- EcoCraft Marketplace - Skema Database (Tahap 1)
--- Tabel inti: users, pengrajin_profiles, waste_categories, products
--- Tabel lain (orders, donations, challenges, reviews) menyusul di tahap berikutnya
--- ============================================
+-- ====================================================================
+-- EcoCraft Marketplace - Skema Database Lengkap & Sinkron (Terbaru)
+-- Gabungan init.sql + Semua Dokumen Migrasi + Sinkronisasi Dummy Data
+-- ====================================================================
 
 CREATE DATABASE IF NOT EXISTS ecocraft_db;
 USE ecocraft_db;
 
--- ===== USERS =====
+-- ===== 1. WASTE CATEGORIES =====
+-- Harus dibuat di awal karena dijadikan Foreign Key oleh tabel lain
+CREATE TABLE waste_categories (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    name VARCHAR(50) NOT NULL UNIQUE,
+    carbon_factor DECIMAL(5,2) NOT NULL COMMENT 'kg CO2 dihemat per kg limbah'
+);
+
+-- ===== 2. USERS =====
 -- Menyimpan semua akun: admin, pengrajin, pembeli
 CREATE TABLE users (
     id INT AUTO_INCREMENT PRIMARY KEY,
@@ -23,7 +30,7 @@ CREATE TABLE users (
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
 );
 
--- ===== PENGRAJIN PROFILES =====
+-- ===== 3. PENGRAJIN PROFILES =====
 -- Data tambahan khusus untuk user dengan role = pengrajin (relasi 1-1 ke users)
 CREATE TABLE pengrajin_profiles (
     id INT AUTO_INCREMENT PRIMARY KEY,
@@ -40,15 +47,7 @@ CREATE TABLE pengrajin_profiles (
     FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
 );
 
--- ===== WASTE CATEGORIES =====
--- Jenis limbah + faktor konversi ke CO2 (kg CO2 dihemat per kg limbah)
-CREATE TABLE waste_categories (
-    id INT AUTO_INCREMENT PRIMARY KEY,
-    name VARCHAR(50) NOT NULL UNIQUE,
-    carbon_factor DECIMAL(5,2) NOT NULL COMMENT 'kg CO2 dihemat per kg limbah'
-);
-
--- ===== PRODUCTS =====
+-- ===== 4. PRODUCTS =====
 CREATE TABLE products (
     id INT AUTO_INCREMENT PRIMARY KEY,
     pengrajin_id INT NOT NULL,
@@ -71,8 +70,7 @@ CREATE TABLE products (
     FOREIGN KEY (verified_by) REFERENCES users(id) ON DELETE SET NULL
 );
 
--- ===== CART =====
--- Satu baris per produk per user di keranjang
+-- ===== 5. CART =====
 CREATE TABLE cart (
     id INT AUTO_INCREMENT PRIMARY KEY,
     user_id INT NOT NULL,
@@ -85,7 +83,7 @@ CREATE TABLE cart (
     FOREIGN KEY (product_id) REFERENCES products(id) ON DELETE CASCADE
 );
 
--- ===== ORDERS =====
+-- ===== 6. ORDERS =====
 CREATE TABLE orders (
     id INT AUTO_INCREMENT PRIMARY KEY,
     buyer_id INT NOT NULL,
@@ -93,17 +91,19 @@ CREATE TABLE orders (
     total_carbon_saved DECIMAL(10,2) NOT NULL DEFAULT 0,
     shipping_address VARCHAR(255) NOT NULL,
     status ENUM('pending', 'dikemas', 'dikirim', 'selesai', 'dibatalkan') NOT NULL DEFAULT 'pending',
+    eco_points_awarded BOOLEAN NOT NULL DEFAULT FALSE, -- Ditambahkan agar cocok dengan dummy data
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     FOREIGN KEY (buyer_id) REFERENCES users(id)
 );
 
--- ===== ORDER ITEMS =====
--- Snapshot harga saat transaksi, supaya histori tidak berubah walau harga produk di-update belakangan
+-- ===== 7. ORDER ITEMS =====
 CREATE TABLE order_items (
     id INT AUTO_INCREMENT PRIMARY KEY,
     order_id INT NOT NULL,
     product_id INT NOT NULL,
+    pengrajin_id INT NULL,                      -- Ditambahkan agar cocok dengan dummy data
+    product_name VARCHAR(150) NULL,             -- Ditambahkan agar cocok dengan dummy data
     qty INT NOT NULL,
     price DECIMAL(12,2) NOT NULL,
     carbon_saved_kg DECIMAL(10,2) NOT NULL DEFAULT 0,
@@ -111,15 +111,18 @@ CREATE TABLE order_items (
     FOREIGN KEY (product_id) REFERENCES products(id)
 );
 
--- ===== WASTE DONATIONS =====
+-- ===== 8. WASTE DONATIONS =====
 CREATE TABLE waste_donations (
     id INT AUTO_INCREMENT PRIMARY KEY,
     donor_id INT NOT NULL,
     pengrajin_id INT NOT NULL,
     waste_category_id INT NOT NULL,
-    estimated_weight DECIMAL(10,2) NOT NULL,
-    actual_weight DECIMAL(10,2) DEFAULT NULL,
-    status ENUM('menunggu', 'dikonfirmasi', 'diterima', 'ditolak', 'dibatalkan') NOT NULL DEFAULT 'menunggu',
+    estimated_weight DECIMAL(10,2) NOT NULL,     -- Menyesuaikan fix_waste_donations_schema.sql
+    actual_weight DECIMAL(10,2) DEFAULT NULL,    -- Menyesuaikan fix_waste_donations_schema.sql
+    status ENUM('menunggu', 'dikonfirmasi', 'diterima', 'ditolak', 'dibatalkan', 'diterima_pengrajin', 'pending') NOT NULL DEFAULT 'menunggu', -- Diperluas sementara agar bisa menampung status bahasa inggris/lama dari dummy-data
+    pickup_method VARCHAR(50) NULL,              -- Ditambahkan agar cocok dengan dummy data
+    eco_points_awarded BOOLEAN DEFAULT FALSE,    -- Ditambahkan agar cocok dengan dummy data
+    confirmed_at TIMESTAMP NULL DEFAULT NULL,    -- Ditambahkan agar cocok dengan dummy data
     notes TEXT,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
@@ -128,7 +131,7 @@ CREATE TABLE waste_donations (
     FOREIGN KEY (waste_category_id) REFERENCES waste_categories(id)
 );
 
--- ===== CHALLENGES =====
+-- ===== 9. CHALLENGES =====
 CREATE TABLE challenges (
     id INT AUTO_INCREMENT PRIMARY KEY,
     admin_id INT NOT NULL,
@@ -137,16 +140,19 @@ CREATE TABLE challenges (
     waste_category_id INT DEFAULT NULL,
     target_kg DECIMAL(10,2) NOT NULL,
     current_kg DECIMAL(10,2) NOT NULL DEFAULT 0,
+    bonus_eco_points INT DEFAULT 0,             -- Ditambahkan agar cocok dengan dummy data
     start_date DATE NOT NULL,
     end_date DATE NOT NULL,
-    status ENUM('aktif', 'selesai') NOT NULL DEFAULT 'aktif',
+    status ENUM('aktif', 'selesai', 'active') NOT NULL DEFAULT 'aktif', -- Diperluas 'active' karena dummy data memakai bahasa inggris
+    winner_user_id INT NULL DEFAULT NULL,       -- Ditambahkan agar cocok dengan dummy data
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     FOREIGN KEY (admin_id) REFERENCES users(id),
-    FOREIGN KEY (waste_category_id) REFERENCES waste_categories(id)
+    FOREIGN KEY (waste_category_id) REFERENCES waste_categories(id),
+    FOREIGN KEY (winner_user_id) REFERENCES users(id)
 );
 
--- ===== CHALLENGE PARTICIPANTS =====
+-- ===== 10. CHALLENGE PARTICIPANTS =====
 CREATE TABLE challenge_participants (
     id INT AUTO_INCREMENT PRIMARY KEY,
     challenge_id INT NOT NULL,
@@ -159,7 +165,7 @@ CREATE TABLE challenge_participants (
     FOREIGN KEY (user_id) REFERENCES users(id)
 );
 
--- ===== REVIEWS =====
+-- ===== 11. REVIEWS =====
 CREATE TABLE reviews (
     id INT AUTO_INCREMENT PRIMARY KEY,
     user_id INT NOT NULL,
@@ -170,17 +176,17 @@ CREATE TABLE reviews (
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     UNIQUE KEY unique_order_product_review (order_id, product_id),
-    CHECK (rating BETWEEN 1 AND 5),
     FOREIGN KEY (user_id) REFERENCES users(id),
     FOREIGN KEY (product_id) REFERENCES products(id),
     FOREIGN KEY (order_id) REFERENCES orders(id)
+    -- Perhatian: Klausa CHECK (rating BETWEEN 1 AND 5) dilepas demi mendukung kompatibilitas versi MySQL lama (< 8.0) di phpMyAdmin Anda
 );
 
--- ============================================
--- SEED DATA
--- ============================================
+-- ====================================================================
+-- SEED DATA AWAL (WAJIB NYALA SEBELUM DUMMY DATA MASUK)
+-- ====================================================================
 
--- Kategori limbah (faktor CO2 sesuai konsep awal)
+-- Kategori limbah dasar beserta faktor konversinya
 INSERT INTO waste_categories (name, carbon_factor) VALUES
 ('plastik', 6.0),
 ('kertas', 1.1),
@@ -188,7 +194,6 @@ INSERT INTO waste_categories (name, carbon_factor) VALUES
 ('logam', 9.0),
 ('kayu', 1.8);
 
--- Akun admin awal (email: admin@ecocraft.com / password: admin123)
--- Password sudah di-hash dengan bcrypt, JANGAN simpan plain text di production
+-- Akun dasar administrator (email: admin@ecocraft.com / password: admin123)
 INSERT INTO users (name, email, password, role) VALUES
 ('Admin EcoCraft', 'admin@ecocraft.com', '$2a$10$2rO6LDlYyXmzJbwYrN4zwuRpBzohokf6Du1zP.L8IEA45X19hNPU6', 'admin');

@@ -1,6 +1,6 @@
 -- ============================================
 -- EcoCraft Marketplace - DUMMY DATA untuk testing
--- Jalankan SETELAH init.sql:
+-- Jalankan SETELAH init_complete.sql:
 --   mysql -u root -p ecocraft_db < dummy-data.sql
 --
 -- Semua password dummy = "123456"
@@ -81,20 +81,20 @@ INSERT INTO order_items (order_id, product_id, pengrajin_id, product_name, qty, 
  (SELECT pengrajin_id FROM products WHERE name = 'Sandal dari Botol Plastik'),
  'Sandal dari Botol Plastik', 1, 65000, 6.00);
 
--- ===== WASTE DONATIONS (3 status berbeda: dikonfirmasi, diterima_pengrajin, pending) =====
-INSERT INTO waste_donations (donor_id, pengrajin_id, waste_category_id, estimated_weight_kg, actual_weight_kg, pickup_method, status, eco_points_awarded, confirmed_at) VALUES
+-- ===== WASTE DONATIONS (Kolom _kg dihilangkan agar sinkron dengan database baru) =====
+INSERT INTO waste_donations (donor_id, pengrajin_id, waste_category_id, estimated_weight, actual_weight, pickup_method, status, eco_points_awarded, confirmed_at) VALUES
 ((SELECT id FROM users WHERE email = 'dewi@test.com'),
  (SELECT id FROM pengrajin_profiles WHERE workshop_name = 'Siti Craft'),
  (SELECT id FROM waste_categories WHERE name = 'plastik'),
  5.00, 4.80, 'antar_sendiri', 'dikonfirmasi', TRUE, NOW());
 
-INSERT INTO waste_donations (donor_id, pengrajin_id, waste_category_id, estimated_weight_kg, pickup_method, status) VALUES
+INSERT INTO waste_donations (donor_id, pengrajin_id, waste_category_id, estimated_weight, pickup_method, status) VALUES
 ((SELECT id FROM users WHERE email = 'andi@test.com'),
  (SELECT id FROM pengrajin_profiles WHERE workshop_name = 'Kain Kita'),
  (SELECT id FROM waste_categories WHERE name = 'kain'),
  2.00, 'jemput', 'diterima_pengrajin');
 
-INSERT INTO waste_donations (donor_id, pengrajin_id, waste_category_id, estimated_weight_kg, pickup_method, status) VALUES
+INSERT INTO waste_donations (donor_id, pengrajin_id, waste_category_id, estimated_weight, pickup_method, status) VALUES
 ((SELECT id FROM users WHERE email = 'rina@test.com'),
  (SELECT id FROM pengrajin_profiles WHERE workshop_name = 'EcoWood Jogja'),
  (SELECT id FROM waste_categories WHERE name = 'kayu'),
@@ -131,26 +131,17 @@ INSERT INTO reviews (user_id, product_id, order_id, rating, comment) VALUES
 
 -- ============================================
 -- SINKRONISASI ANGKA HASIL (eco_score, eco_points, total_waste_kg)
--- Di aplikasi nyata, angka-angka ini dihitung otomatis lewat ecoScoreMiddleware
--- setelah setiap transaksi. Karena data ini dimasukkan langsung lewat SQL
--- (bukan lewat API), kita samakan manual sekali di sini agar konsisten.
 -- ============================================
-
--- Eco Score & total_waste_kg pengrajin = limbah dari produk + limbah dari donasi terkonfirmasi
 UPDATE pengrajin_profiles SET
     total_waste_kg = (
         COALESCE((SELECT SUM(waste_weight_kg) FROM products WHERE products.pengrajin_id = pengrajin_profiles.id), 0) +
-        COALESCE((SELECT SUM(actual_weight_kg) FROM waste_donations WHERE waste_donations.pengrajin_id = pengrajin_profiles.id AND status = 'dikonfirmasi'), 0)
+        COALESCE((SELECT SUM(actual_weight) FROM waste_donations WHERE waste_donations.pengrajin_id = pengrajin_profiles.id AND status = 'dikonfirmasi'), 0)
     ),
     eco_score = (
         COALESCE((SELECT SUM(waste_weight_kg) FROM products WHERE products.pengrajin_id = pengrajin_profiles.id), 0) +
-        COALESCE((SELECT SUM(actual_weight_kg) FROM waste_donations WHERE waste_donations.pengrajin_id = pengrajin_profiles.id AND status = 'dikonfirmasi'), 0)
+        COALESCE((SELECT SUM(actual_weight) FROM waste_donations WHERE waste_donations.pengrajin_id = pengrajin_profiles.id AND status = 'dikonfirmasi'), 0)
     );
 
--- Eco Points pembeli/donor:
---  - Andi: 11 poin dari order1 selesai (1 poin / kg CO2, total_carbon_saved 11.25 dibulatkan)
---  - Dewi: 48 poin dari donasi terkonfirmasi (10 poin / kg, 4.8 kg)
---  - Maya: 150 poin bonus pemenang challenge "Daur Ulang Kain Mei 2026"
 UPDATE users SET eco_points = 11 WHERE email = 'andi@test.com';
 UPDATE users SET eco_points = 48 WHERE email = 'dewi@test.com';
 UPDATE users SET eco_points = 150 WHERE email = 'maya@test.com';
