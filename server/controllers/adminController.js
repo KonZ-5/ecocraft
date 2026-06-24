@@ -9,11 +9,17 @@ const getAllPengrajin = (req, res) => {
     const offset = (page - 1) * limit;
 
     let query = `
-        SELECT pengrajin_profiles.*, users.name, users.email, users.status AS account_status
+        SELECT
+            pengrajin_profiles.*,
+            users.name,
+            users.email,
+            users.status AS account_status
         FROM pengrajin_profiles
-        JOIN users ON pengrajin_profiles.user_id = users.id
+        JOIN users
+            ON pengrajin_profiles.user_id = users.id
         WHERE 1=1
     `;
+
     const queryParams = [];
 
     if (verified === "true" || verified === "false") {
@@ -21,17 +27,29 @@ const getAllPengrajin = (req, res) => {
         queryParams.push(verified === "true" ? 1 : 0);
     }
 
-    query += " ORDER BY pengrajin_profiles.created_at DESC LIMIT ? OFFSET ?";
+    query += `
+        ORDER BY pengrajin_profiles.created_at DESC
+        LIMIT ?
+        OFFSET ?
+    `;
+
     queryParams.push(limit, offset);
 
     db.query(query, queryParams, (err, results) => {
         if (err) {
-            return res.status(500).json({ status: "error", message: err.message });
+            return res.status(500).json({
+                status: "error",
+                message: err.message
+            });
         }
-        if (results.length === 0) {
-            return res.status(404).json({ status: "fail", message: "Tidak ada data pengrajin" });
-        }
-        res.status(200).json({ status: "success", page, limit, data: results });
+
+        // JANGAN RETURN 404
+        return res.status(200).json({
+            status: "success",
+            page,
+            limit,
+            data: results || []
+        });
     });
 };
 
@@ -48,6 +66,73 @@ const verifyPengrajin = (req, res) => {
                 return res.status(404).json({ status: "fail", message: "Profil pengrajin tidak ditemukan" });
             }
             res.status(200).json({ status: "success", message: "Pengrajin berhasil diverifikasi" });
+        }
+    );
+};
+
+const getPendingProducts = (req, res) => {
+    const query = `
+        SELECT
+            p.*,
+            u.name AS pengrajin_name,
+            pp.workshop_name
+        FROM products p
+        JOIN pengrajin_profiles pp
+            ON p.pengrajin_id = pp.id
+        JOIN users u
+            ON pp.user_id = u.id
+        WHERE p.is_verified = FALSE
+        ORDER BY p.created_at DESC
+    `;
+
+    db.query(query, (err, results) => {
+        if (err) {
+            return res.status(500).json({
+                status: "error",
+                message: err.message
+            });
+        }
+
+        res.status(200).json({
+            status: "success",
+            data: results
+        });
+    });
+};
+
+const verifyProduct = (req, res) => {
+    const productId = req.params.id;
+
+    db.query(
+        `
+        UPDATE products
+        SET
+            is_verified = TRUE,
+            verified_at = NOW(),
+            verified_by = ?
+        WHERE id = ?
+        `,
+        [req.user.id, productId],
+        (err, result) => {
+
+            if (err) {
+                return res.status(500).json({
+                    status: "error",
+                    message: err.message
+                });
+            }
+
+            if (result.affectedRows === 0) {
+                return res.status(404).json({
+                    status: "fail",
+                    message: "Produk tidak ditemukan"
+                });
+            }
+
+            res.status(200).json({
+                status: "success",
+                message: "Produk berhasil diverifikasi"
+            });
         }
     );
 };
@@ -102,7 +187,10 @@ const getDashboardStats = (req, res) => {
             (SELECT COALESCE(SUM(total_price), 0) FROM orders WHERE status = 'selesai') AS total_omzet,
             (SELECT COALESCE(SUM(total_carbon_saved), 0) FROM orders WHERE status = 'selesai') AS total_co2_dari_transaksi,
             (SELECT COALESCE(SUM(waste_weight_kg), 0) FROM products) AS total_limbah_dari_produk_kg,
-            (SELECT COALESCE(SUM(actual_weight), 0) FROM waste_donations WHERE status = 'diterima') AS total_limbah_dari_donasi_kg,
+            (SELECT COALESCE(SUM(actual_weight_kg), 0)
+            FROM waste_donations
+            WHERE status IN ('diterima_pengrajin','diterima'))
+            AS total_limbah_dari_donasi_kg,
             (SELECT COUNT(*) FROM waste_donations WHERE status = 'menunggu') AS donasi_menunggu_konfirmasi,
             (SELECT COUNT(*) FROM challenges WHERE status = 'aktif') AS challenge_aktif
     `;
@@ -115,4 +203,14 @@ const getDashboardStats = (req, res) => {
     });
 };
 
-export { getAllPengrajin, verifyPengrajin, updateUserStatus, deleteUser, getDashboardStats };
+export {
+    getAllPengrajin,
+    verifyPengrajin,
+
+    getPendingProducts,
+    verifyProduct,
+
+    updateUserStatus,
+    deleteUser,
+    getDashboardStats
+};

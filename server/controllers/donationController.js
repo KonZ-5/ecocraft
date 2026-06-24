@@ -1,5 +1,6 @@
 import db from "../config/database.js";
 import { recalculatePengrajinEcoScore } from "../utils/ecoScore.js";
+import { addEcoPoints } from "../utils/ecoPoints.js";
 
 // Poin yang didapat donatur per kg limbah aktual yang diterima
 const ECO_POINTS_PER_KG_DONATION = 10;
@@ -48,9 +49,6 @@ const getAllDonasi = (req, res) => {
     db.query(query, queryParams, (err, results) => {
         if (err) {
             return res.status(500).json({ status: "error", message: err.message });
-        }
-        if (results.length === 0) {
-            return res.status(404).json({ status: "fail", message: "Data donasi tidak ditemukan" });
         }
         res.status(200).json({ status: "success", page, limit, data: results });
     });
@@ -117,7 +115,14 @@ const createDonasi = (req, res) => {
         }
 
         const insertQuery = `
-            INSERT INTO waste_donations (donor_id, pengrajin_id, waste_category_id, estimated_weight, notes)
+            INSERT INTO waste_donations
+                (
+                    donor_id,
+                    pengrajin_id,
+                    waste_category_id,
+                    estimated_weight,
+                    notes
+                )
             VALUES (?, ?, ?, ?, ?)
         `;
         db.query(
@@ -127,20 +132,39 @@ const createDonasi = (req, res) => {
                 if (err) {
                     return res.status(500).json({ status: "error", message: err.message });
                 }
-                res.status(201).json({
-                    status: "success",
-                    message: "Request donasi berhasil dibuat. Menunggu konfirmasi pengrajin.",
-                    id: result.insertId,
-                });
+
+                // Kalkulasi eco points saat pengajuan donasi dibuat
+                const ecoPoints = Math.floor(Number(estimated_weight) * 10);
+
+                db.query(
+                    `
+                    UPDATE users
+                    SET eco_points = eco_points + ?
+                    WHERE id = ?
+                    `,
+                    [ecoPoints, req.user.id],
+                    (err2) => {
+                        if (err2) {
+                            return res.status(500).json({
+                                status: "error",
+                                message: err2.message
+                            });
+                        }
+
+                        return res.status(201).json({
+                            status: "success",
+                            message: "Request donasi berhasil dibuat. Menunggu konfirmasi pengrajin.",
+                            id: result.insertId,
+                            eco_points_earned: ecoPoints
+                        });
+                    }
+                );
             }
         );
     });
 };
 
 // PUT Konfirmasi Donasi (khusus pengrajin tujuan donasi)
-// status: 'dikonfirmasi' (pengrajin setuju, belum terima fisik) atau
-// 'diterima' (barang sudah diterima, wajib isi actual_weight -> trigger eco points & eco score) atau
-// 'ditolak'
 const confirmDonasi = (req, res) => {
     const { status, actual_weight } = req.body;
     const allowedStatus = ["dikonfirmasi", "diterima", "ditolak"];
@@ -183,7 +207,7 @@ const confirmDonasi = (req, res) => {
         if (donation.status === "diterima" || donation.status === "ditolak" || donation.status === "dibatalkan") {
             return res.status(409).json({
                 status: "fail",
-                message: `Donasi sudah berstatus '${donation.status}' dan tidak bisa diubah lagi.`,
+                message: `Donasi sudah berstatus '${donation.status}' and tidak bisa diubah lagi.`,
             });
         }
 
@@ -213,6 +237,10 @@ const confirmDonasi = (req, res) => {
                         return res.status(500).json({ status: "error", message: err.message });
                     }
                     recalculatePengrajinEcoScore(donation.pengrajin_id, () => {
+                        // Tambah bonus Poin Tambahan Saat Donasi Sukses Diterima
+                        addEcoPoints(donation.donor_id, 20); // Donatur mendapat +20 poin
+                        addEcoPoints(donation.pengrajin_user_id, 15); // Pengrajin mendapat +15 poin
+
                         res.status(200).json({
                             status: "success",
                             message: "Donasi diterima. Eco Points donor & Eco Score pengrajin telah diperbarui.",

@@ -1,9 +1,38 @@
 import db from "../config/database.js";
 import { calculateCarbonSaved, recalculatePengrajinEcoScore } from "../utils/ecoScore.js";
+import { addEcoPoints } from "../utils/ecoPoints.js";
 
-// GET Semua Produk (publik - guest pun bisa akses)
-// Filter: name, waste_category (nama kategori), pengrajin_id
-// Pagination: page, limit
+// GET Produk Milik Pengrajin yang Login
+const getMyProducts = (req, res) => {
+  const query = `
+    SELECT
+      products.*,
+      waste_categories.name AS waste_category_name
+    FROM products
+    JOIN pengrajin_profiles
+      ON products.pengrajin_id = pengrajin_profiles.id
+    LEFT JOIN waste_categories
+      ON products.waste_category_id = waste_categories.id
+    WHERE pengrajin_profiles.user_id = ?
+    ORDER BY products.created_at DESC
+  `;
+
+  db.query(query, [req.user.id], (err, results) => {
+
+        if (err) {
+            return res.status(500).json({
+                status: "error",
+                message: err.message,
+            });
+        }
+
+        return res.status(200).json({
+            status: "success",
+            data: results,
+        });
+    });
+};
+
 const getAllProduk = (req, res) => {
     const name = req.query.name || "";
     const waste_category = req.query.waste_category || "";
@@ -13,6 +42,8 @@ const getAllProduk = (req, res) => {
     const limit = parseInt(req.query.limit) || 10;
     const offset = (page - 1) * limit;
 
+    // Perubahan ada di klausa WHERE di bawah ini
+    // products.is_verified = TRUE  -> hanya produk yang sudah disetujui admin yang muncul di marketplace publik
     let query = `
         SELECT
             products.*,
@@ -22,8 +53,12 @@ const getAllProduk = (req, res) => {
         FROM products
         JOIN pengrajin_profiles ON products.pengrajin_id = pengrajin_profiles.id
         JOIN waste_categories ON products.waste_category_id = waste_categories.id
-        WHERE products.is_active = TRUE AND products.name LIKE ?
+        WHERE products.is_active = TRUE
+        AND products.is_verified = TRUE
+        AND pengrajin_profiles.is_verified = TRUE
+        AND products.name LIKE ?
     `;
+
     let queryParams = [`%${name}%`];
 
     if (waste_category) {
@@ -41,15 +76,18 @@ const getAllProduk = (req, res) => {
 
     db.query(query, queryParams, (err, results) => {
         if (err) {
-            return res.status(500).json({ status: "error", message: err.message });
-        }
-        if (results.length === 0) {
-            return res.status(404).json({
-                status: "fail",
-                message: "Produk tidak ditemukan. Kriteria pencarian Anda mungkin tidak sesuai",
+            return res.status(500).json({
+                status: "error",
+                message: err.message,
             });
         }
-        res.status(200).json({ status: "success", page, limit, data: results });
+
+        return res.status(200).json({
+            status: "success",
+            page,
+            limit,
+            data: results,
+        });
     });
 };
 
@@ -126,8 +164,8 @@ const createProduk = (req, res) => {
 
             const insertQuery = `
                 INSERT INTO products
-                    (pengrajin_id, waste_category_id, name, description, price, stock, image, waste_weight_kg, carbon_saved_kg)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    (pengrajin_id, waste_category_id, name, description, price, stock, image, waste_weight_kg, carbon_saved_kg, is_verified)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, FALSE)
             `;
             const values = [
                 pengrajinProfile.id,
@@ -138,7 +176,7 @@ const createProduk = (req, res) => {
                 stock || 0,
                 image || null,
                 waste_weight_kg,
-                carbonSaved,
+                carbonSaved
             ];
 
             db.query(insertQuery, values, (err, result) => {
@@ -147,11 +185,14 @@ const createProduk = (req, res) => {
                 }
 
                 recalculatePengrajinEcoScore(pengrajinProfile.id, () => {
+                    addEcoPoints(req.user.id, 5);
+                    
                     res.status(201).json({
                         status: "success",
-                        message: "Produk berhasil ditambahkan",
+                        message: "Produk berhasil ditambahkan. Menunggu verifikasi admin sebelum tampil di marketplace.",
                         id: result.insertId,
                         carbon_saved_kg: carbonSaved,
+                        is_verified: false,
                     });
                 });
             });
@@ -176,12 +217,18 @@ const updateProduk = (req, res) => {
         const newWasteCategoryId = waste_category_id || existing.waste_category_id;
         const newWasteWeight = waste_weight_kg !== undefined ? waste_weight_kg : existing.waste_weight_kg;
 
+        // Kalau pengrajin (bukan admin) mengedit produk yang sudah terverifikasi,
+        // status verifikasi di-reset supaya admin sempat review ulang perubahan
+        // sebelum produk tampil lagi di marketplace publik.
+        const shouldResetVerification = req.user.role !== "admin" && existing.is_verified;
+
         const applyUpdate = (carbonSaved) => {
             const query = `
                 UPDATE products SET
                     name = ?, description = ?, price = ?, stock = ?,
                     waste_weight_kg = ?, waste_category_id = ?, image = ?,
                     carbon_saved_kg = ?, is_active = ?
+                    ${shouldResetVerification ? ", is_verified = FALSE, verified_at = NULL, verified_by = NULL" : ""}
                 WHERE id = ?
             `;
             const values = [
@@ -202,7 +249,12 @@ const updateProduk = (req, res) => {
                     return res.status(500).json({ status: "error", message: err.message });
                 }
                 recalculatePengrajinEcoScore(existing.pengrajin_id, () => {
-                    res.status(200).json({ status: "success", message: "Produk berhasil diperbarui" });
+                    res.status(200).json({
+                        status: "success",
+                        message: shouldResetVerification
+                            ? "Produk berhasil diperbarui. Karena ada perubahan, produk perlu diverifikasi ulang oleh admin sebelum tampil di marketplace."
+                            : "Produk berhasil diperbarui",
+                    });
                 });
             });
         };
@@ -259,4 +311,11 @@ const deleteProduk = (req, res) => {
     });
 };
 
-export { getAllProduk, getProdukById, createProduk, updateProduk, deleteProduk };
+export {
+  getAllProduk,
+  getMyProducts,
+  getProdukById,
+  createProduk,
+  updateProduk,
+  deleteProduk,
+};

@@ -1,4 +1,5 @@
 import db from "../config/database.js";
+import { addEcoPoints } from "../utils/ecoPoints.js";
 
 // POST Tulis Review (hanya pembeli yang order-nya sudah 'selesai' dan berisi produk tsb)
 const createReview = (req, res) => {
@@ -36,6 +37,10 @@ const createReview = (req, res) => {
                 }
                 return res.status(500).json({ status: "error", message: err.message });
             }
+
+            // Tambah poin ketika review berhasil disimpan
+            addEcoPoints(req.user.id, 3);
+
             res.status(201).json({ status: "success", message: "Ulasan berhasil ditambahkan", id: result.insertId });
         });
     });

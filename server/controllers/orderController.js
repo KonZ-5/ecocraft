@@ -1,4 +1,5 @@
 import db, { promisePool } from "../config/database.js";
+import { addEcoPoints } from "../utils/ecoPoints.js";
 
 // Poin reward dasar untuk pembeli setelah order selesai (dibulatkan dari total carbon saved)
 const calculateOrderEcoPoints = (totalCarbonSaved) => Math.round(Number(totalCarbonSaved) * 2);
@@ -19,7 +20,8 @@ const createOrder = async (req, res) => {
 
         const [cartItems] = await connection.query(
             `SELECT cart.id AS cart_id, cart.product_id, cart.qty,
-                    products.price, products.stock, products.carbon_saved_kg, products.is_active
+                    products.price, products.stock, products.carbon_saved_kg, products.is_active,
+                    products.pengrajin_id
              FROM cart
              JOIN products ON cart.product_id = products.id
              WHERE cart.user_id = ?
@@ -63,8 +65,8 @@ const createOrder = async (req, res) => {
 
         for (const item of cartItems) {
             await connection.query(
-                "INSERT INTO order_items (order_id, product_id, qty, price, carbon_saved_kg) VALUES (?, ?, ?, ?, ?)",
-                [orderId, item.product_id, item.qty, item.price, item.carbon_saved_kg]
+                "INSERT INTO order_items (order_id, product_id, pengrajin_id, qty, price, carbon_saved_kg) VALUES (?, ?, ?, ?, ?, ?)",
+                [orderId, item.product_id, item.pengrajin_id, item.qty, item.price, item.carbon_saved_kg]
             );
             await connection.query("UPDATE products SET stock = stock - ? WHERE id = ?", [item.qty, item.product_id]);
         }
@@ -123,12 +125,18 @@ const getAllOrder = (req, res) => {
 
     db.query(query, queryParams, (err, results) => {
         if (err) {
-            return res.status(500).json({ status: "error", message: err.message });
+            return res.status(500).json({
+                status: "error",
+                message: err.message
+            });
         }
-        if (results.length === 0) {
-            return res.status(404).json({ status: "fail", message: "Order tidak ditemukan" });
-        }
-        res.status(200).json({ status: "success", page, limit, data: results });
+
+        return res.status(200).json({
+            status: "success",
+            page,
+            limit,
+            data: results || []
+        });
     });
 };
 
@@ -202,15 +210,25 @@ const updateOrderStatus = (req, res) => {
                     return res.status(200).json({ status: "success", message: `Status order berhasil diubah menjadi '${status}'` });
                 }
 
-                const ecoPoints = calculateOrderEcoPoints(order.total_carbon_saved);
-                db.query("UPDATE users SET eco_points = eco_points + ? WHERE id = ?", [ecoPoints, order.buyer_id], (err) => {
+                // Hitung eco points berdasarkan total emisi karbon yang berhasil dihemat
+                const ecoPointsCarbon = calculateOrderEcoPoints(order.total_carbon_saved);
+                
+                db.query("UPDATE users SET eco_points = eco_points + ? WHERE id = ?", [ecoPointsCarbon, order.buyer_id], (err) => {
                     if (err) {
                         return res.status(500).json({ status: "error", message: err.message });
                     }
+                    
+                    // Hitung bonus poin tambahan berdasarkan nilai transaksi (Setiap kelipatan Rp 100.000 mendapat 5 poin)
+                    const transactionPoints = Math.floor(order.total_price / 100000) * 5;
+                    
+                    if (transactionPoints > 0) {
+                        addEcoPoints(order.buyer_id, transactionPoints);
+                    }
+
                     res.status(200).json({
                         status: "success",
                         message: "Order selesai. Eco Points pembeli telah ditambahkan.",
-                        eco_points_diberikan: ecoPoints,
+                        eco_points_diberikan: ecoPointsCarbon + transactionPoints,
                     });
                 });
             });

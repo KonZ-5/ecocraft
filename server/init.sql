@@ -61,10 +61,14 @@ CREATE TABLE products (
     waste_weight_kg DECIMAL(10,2) NOT NULL COMMENT 'berat limbah yang dipakai untuk produk ini',
     carbon_saved_kg DECIMAL(10,2) NOT NULL DEFAULT 0 COMMENT 'dihitung otomatis: waste_weight_kg x carbon_factor',
     is_active BOOLEAN NOT NULL DEFAULT TRUE,
+    is_verified BOOLEAN NOT NULL DEFAULT FALSE COMMENT 'produk hanya tampil publik setelah diverifikasi admin',
+    verified_at TIMESTAMP NULL DEFAULT NULL,
+    verified_by INT NULL DEFAULT NULL COMMENT 'id admin (users.id) yang memverifikasi',
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     FOREIGN KEY (pengrajin_id) REFERENCES pengrajin_profiles(id) ON DELETE CASCADE,
-    FOREIGN KEY (waste_category_id) REFERENCES waste_categories(id)
+    FOREIGN KEY (waste_category_id) REFERENCES waste_categories(id),
+    FOREIGN KEY (verified_by) REFERENCES users(id) ON DELETE SET NULL
 );
 
 -- ===== CART =====

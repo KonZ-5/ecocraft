@@ -11,6 +11,7 @@ import orderRoute from "./routes/orderRoute.js";
 import challengeRoute from "./routes/challengeRoute.js";
 import reviewRoute from "./routes/reviewRoute.js";
 import adminRoute from "./routes/adminRoute.js";
+import pengrajinRoute from "./routes/pengrajinRoute.js";
 
 import { errorHandler } from "./middlewares/errorHandler.js";
 
@@ -33,6 +34,7 @@ app.use("/api/orders", orderRoute);
 app.use("/api/challenges", challengeRoute);
 app.use("/api/reviews", reviewRoute);
 app.use("/api/admin", adminRoute);
+app.use("/api/pengrajin", pengrajinRoute);
 
 // 404 - endpoint tidak ditemukan
 app.use((req, res) => {
