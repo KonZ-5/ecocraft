@@ -3,6 +3,7 @@ import {
   adminApi,
   challengeApi,
   donationApi,
+  orderApi,
 } from "../../services/api";
 import { Loading, Alert, StatusBadge, Empty, formatRupiah, formatTanggal } from "../../components/common";
 
@@ -23,6 +24,11 @@ export default function AdminDashboard() {
   const [alert, setAlert] = useState(null);
   const [loading, setLoading] = useState(true);
 
+  // Order management state
+  const [orders, setOrders] = useState([]);
+  const [orderStatusFilter, setOrderStatusFilter] = useState("");
+  const [updatingOrderId, setUpdatingOrderId] = useState(null);
+
   // Challenge form
   const [challengeForm, setChallengeForm] = useState(EMPTY_CHALLENGE);
   const [savingChallenge, setSavingChallenge] = useState(false);
@@ -32,7 +38,7 @@ export default function AdminDashboard() {
     setLoading(true);
 
     try {
-      const [pr, cr, ppr, dr] = await Promise.all([
+      const [pr, cr, ppr, dr, or_] = await Promise.all([
         adminApi.getPengrajin({
           verified: userFilter,
           limit: 50,
@@ -44,12 +50,14 @@ export default function AdminDashboard() {
         donationApi.getAll({
           status: "menunggu",
         }),
+        orderApi.getAll({ status: orderStatusFilter, limit: 50 }),
       ]);
 
       setPengrajinList(pr.data.data || []);
       setChallenges(cr.data.data || []);
       setPendingProducts(ppr.data.data || []);
       setPendingDonations(dr.data.data || []);
+      setOrders(or_.data.data || []);
     } catch (err) {
       console.error(err);
     }
@@ -57,7 +65,7 @@ export default function AdminDashboard() {
     setLoading(false);
   };
 
-  useEffect(() => { fetchAll(); }, [userFilter]);
+  useEffect(() => { fetchAll(); }, [userFilter, orderStatusFilter]);
 
   const handleVerify = async (id) => {
     try {
@@ -163,10 +171,41 @@ export default function AdminDashboard() {
     }
   };
 
+  const handleUpdateOrderStatus = async (orderId, newStatus) => {
+    if (!confirm(`Ubah status order #${orderId} menjadi "${newStatus}"?`)) return;
+    setUpdatingOrderId(orderId);
+    try {
+      await orderApi.updateStatus(orderId, { status: newStatus });
+      setAlert({ type: "success", msg: `Status order #${orderId} berhasil diubah menjadi "${newStatus}".` });
+      fetchAll();
+    } catch (err) {
+      setAlert({ type: "error", msg: err.response?.data?.message || "Gagal mengubah status order." });
+    } finally {
+      setUpdatingOrderId(null);
+    }
+  };
+
+  const ORDER_STATUS_FLOW = {
+    pending:  ["dikemas", "dibatalkan"],
+    dikemas:  ["dikirim"],
+    dikirim:  ["selesai"],
+    selesai:  [],
+    dibatalkan: [],
+  };
+
+  const STATUS_LABEL = {
+    pending: { label: "Menunggu", color: "badge-gray" },
+    dikemas: { label: "Dikemas", color: "badge-eco" },
+    dikirim: { label: "Dikirim", color: "text-blue-600 bg-blue-50 border-blue-200" },
+    selesai: { label: "Selesai", color: "badge-eco" },
+    dibatalkan: { label: "Dibatalkan", color: "badge-red" },
+  };
+
   const TABS = [
     { key: "donasi", label: "♻️ Verifikasi Donasi" },
     { key: "pengrajin", label: "🔍 Verifikasi Pengrajin" },
     { key: "produk", label: "📦 Verifikasi Produk" },
+    { key: "orders", label: "🛒 Kelola Order" },
     { key: "challenges", label: "🏆 Challenge" },
   ];
 
@@ -369,6 +408,88 @@ export default function AdminDashboard() {
                       </div>
                     </div>
                   ))}
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* ═══ TAB KELOLA ORDER ═══ */}
+          {tab === "orders" && (
+            <div>
+              {/* Filter status */}
+              <div className="flex gap-2 mb-4 flex-wrap">
+                {[
+                  { val: "", label: "Semua" },
+                  { val: "pending", label: "⏳ Menunggu" },
+                  { val: "dikemas", label: "📦 Dikemas" },
+                  { val: "dikirim", label: "🚚 Dikirim" },
+                  { val: "selesai", label: "✅ Selesai" },
+                  { val: "dibatalkan", label: "❌ Dibatalkan" },
+                ].map((f) => (
+                  <button key={f.val} onClick={() => setOrderStatusFilter(f.val)}
+                    className={`px-3 py-1.5 rounded-full text-sm font-medium border transition-colors ${
+                      orderStatusFilter === f.val
+                        ? "bg-leaf text-white border-leaf"
+                        : "bg-white text-gray-600 border-gray-200 hover:border-leaf"
+                    }`}
+                  >
+                    {f.label}
+                  </button>
+                ))}
+              </div>
+
+              {orders.length === 0 ? (
+                <Empty icon="🛒" title="Tidak ada order ditemukan" />
+              ) : (
+                <div className="space-y-3">
+                  {orders.map((o) => {
+                    const nextStatuses = ORDER_STATUS_FLOW[o.status] || [];
+                    const statusInfo = STATUS_LABEL[o.status] || { label: o.status, color: "badge-gray" };
+                    const isUpdating = updatingOrderId === o.id;
+                    return (
+                      <div key={o.id} className="card">
+                        <div className="flex justify-between items-start gap-4">
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center gap-2 mb-1">
+                              <span className="font-semibold text-gray-800">Order #{o.id}</span>
+                              <span className={`badge text-xs px-2 py-0.5 border rounded-full ${statusInfo.color}`}>
+                                {statusInfo.label}
+                              </span>
+                            </div>
+                            <div className="text-sm text-gray-500">
+                              📅 {formatTanggal(o.created_at)}
+                            </div>
+                            <div className="text-sm text-gray-500">
+                              💰 {formatRupiah(o.total_price)}
+                            </div>
+                            <div className="text-sm text-gray-500 truncate">
+                              📍 {o.shipping_address}
+                            </div>
+                          </div>
+                          {nextStatuses.length > 0 && (
+                            <div className="flex flex-col gap-2 items-end shrink-0">
+                              {nextStatuses.map((s) => (
+                                <button
+                                  key={s}
+                                  onClick={() => handleUpdateOrderStatus(o.id, s)}
+                                  disabled={isUpdating}
+                                  className={`text-xs py-1.5 px-3 rounded-lg border font-medium transition-colors disabled:opacity-50 ${
+                                    s === "dibatalkan"
+                                      ? "border-red-200 text-red-500 hover:bg-red-50"
+                                      : s === "selesai"
+                                      ? "btn-primary"
+                                      : "border-leaf text-leaf hover:bg-leaf/10"
+                                  }`}
+                                >
+                                  {isUpdating ? "..." : `→ ${STATUS_LABEL[s]?.label || s}`}
+                                </button>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
                 </div>
               )}
             </div>
